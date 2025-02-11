@@ -17,12 +17,12 @@ interface Expense {
 
 const detailOptions = [
   { value: "Fuel", label: "Combustible" },
-  { value: "Tolls", label: "Peajes y TAG" },
+  { value: "Tolls", label: "Peajes y troncales" },
   { value: "PublicTransport", label: "Transporte público" },
   { value: "Parking", label: "Estacionamientos" },
   { value: "VehicleMaintenance", label: "Mantenimiento vehicular" },
   { value: "CarInsurance", label: "Seguro automotriz" },
-  { value: "RideSharing", label: "Taxi/Uber/Didi/Cabify" },
+  { value: "RideSharing", label: "Uber/Didi" },
   { value: "Supermarket", label: "Supermercado" },
   { value: "Greengrocer", label: "Verdulería" },
   { value: "Butcher", label: "Carnicería" },
@@ -44,7 +44,7 @@ const detailOptions = [
   { value: "Medicines", label: "Medicamentos" },
   { value: "Dental", label: "Dentista" },
   { value: "Optical", label: "Óptica/Lentes" },
-  { value: "AlcoholTobacco", label: "Alcohol y tabaco" },
+  { value: "AlcoholTobacco", label: "Bebestibles" },
   { value: "Entertainment", label: "Salidas" },
   { value: "CinemaTheater", label: "Cine/Teatro/Eventos" },
   { value: "Subscriptions", label: "Suscripciones" },
