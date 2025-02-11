@@ -21,24 +21,26 @@
     "react-dom": "^18.2.0",
     "react-helmet": "^6.1.0",
     "react-select": "^5.10.0",
-    "recharts": "^2.15.1"
+    "recharts": "^2.15.1",
+    "sharp": "^0.32.1"
   },
   "devDependencies": {
     "prettier": "^2.8.8"
+  },
+  "scripts": {
+    "develop": "gatsby develop",
+    "build": "npx gatsby build",
+    "serve": "gatsby serve",
+    "format": "prettier --write \"**/*.{js,jsx,ts,tsx,json,md,css}\"",
+    "start": "gatsby develop",
+    "clean": "gatsby clean",
+    "test": "echo \"Write tests! -> https://gatsby.dev/unit-testing\" && exit 1",
+    "postinstall": "npm rebuild sharp"
   },
   "keywords": [
     "gatsby"
   ],
   "license": "0BSD",
-  "scripts": {
-    "develop": "gatsby develop",
-    "build": "node node_modules/gatsby/dist/bin/gatsby build",
-    "serve": "gatsby serve",
-    "format": "prettier --write \"**/*.{js,jsx,ts,tsx,json,md,css}\"",
-    "start": "gatsby develop",
-    "clean": "gatsby clean",
-    "test": "echo \"Write tests! -> https://gatsby.dev/unit-testing\" && exit 1"
-  },
   "repository": {
     "type": "git",
     "url": "https://github.com/gatsbyjs/gatsby-starter-default"
