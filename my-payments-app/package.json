@@ -4,6 +4,9 @@
   "description": "A simple starter to get up and developing quickly with Gatsby",
   "version": "0.1.0",
   "author": "Kyle Mathews <mathews.kyle@gmail.com>",
+  "engines": {
+    "node": ">=16.0.0"
+  },
   "dependencies": {
     "firebase": "^11.3.0",
     "gatsby": "^5.14.1",
@@ -29,7 +32,7 @@
   "license": "0BSD",
   "scripts": {
     "develop": "gatsby develop",
-    "build": "npx gatsby build",
+    "build": "node node_modules/gatsby/dist/bin/gatsby build",
     "serve": "gatsby serve",
     "format": "prettier --write \"**/*.{js,jsx,ts,tsx,json,md,css}\"",
     "start": "gatsby develop",
