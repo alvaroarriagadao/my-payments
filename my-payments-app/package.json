@@ -29,7 +29,7 @@
   "license": "0BSD",
   "scripts": {
     "develop": "gatsby develop",
-    "build": "gatsby build",
+    "build": "npx gatsby build",
     "serve": "gatsby serve",
     "format": "prettier --write \"**/*.{js,jsx,ts,tsx,json,md,css}\"",
     "start": "gatsby develop",
