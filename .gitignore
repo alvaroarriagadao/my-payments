@@ -1,0 +1,17 @@
+/node_modules
+.DS_Store
+
+# Ignorar caché de Gatsby
+.cache/
+public/
+
+# Ignorar archivos de Webpack y compilaciones
+webpack/
+build/
+
+# Ignorar archivos grandes específicos
+*.pack
+*.log
+
+# Ignorar imágenes procesadas y optimizadas
+src/images/generated/
