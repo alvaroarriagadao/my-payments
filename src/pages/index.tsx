@@ -8,7 +8,7 @@ import "react-toastify/dist/ReactToastify.css";
 
 import "../styles/global.css";
 
-import { ChartSection } from "../components/charSection"; 
+import { ChartSection } from "../components/charSection";
 
 // Tipos e interfaces
 interface Expense {
@@ -16,13 +16,13 @@ interface Expense {
   card: string;
   totalAmount: number;
   installments: number;
-  firstPaymentMonth: string;
+  firstPaymentMonth: string; // Formato "YYYY-MM"
   detail: string;
   userId: string;
   registrationDate: string;
 }
 
-// Bancos disponibles
+// Bancos y opciones de detalle
 const bankOptions = [
   "Itau",
   "Banco de Chile",
@@ -38,7 +38,6 @@ const bankOptions = [
   "Banco BICE"
 ];
 
-// Opciones de detalle
 const detailOptions = [
   { value: "Fuel", label: "Combustible" },
   { value: "Supermarket", label: "Supermercado" },
@@ -99,13 +98,14 @@ const detailOptions = [
   { value: "Other", label: "Otro" }
 ];
 
-// Nombres de meses
 const monthNames = [
   "Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio",
   "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre"
 ];
 
-// Devuelve un YYYY-MM por defecto para la primera cuota
+/**
+ * Devuelve un YYYY-MM por defecto para la primera cuota según el día de facturación.
+ */
 const getDefaultFirstPaymentMonth = (billingDay: number): string => {
   const today = new Date();
   let year = today.getFullYear();
@@ -120,13 +120,17 @@ const getDefaultFirstPaymentMonth = (billingDay: number): string => {
   return `${year}-${(month + 1).toString().padStart(2, "0")}`;
 };
 
-// Formatea un número a CLP con separadores
+/**
+ * Formatea un número a CLP con separadores.
+ */
 const formatNumber = (value: number | string): string => {
   const numberValue = typeof value === "number" ? value : Number(value.replace(/\D/g, ""));
   return numberValue.toLocaleString("es-CL");
 };
 
-// Convierte fecha a dd-mm-yyyy (CL)
+/**
+ * Convierte una fecha a formato dd-mm-yyyy (CL).
+ */
 const formatDate = (dateStr: string): string => {
   const date = new Date(dateStr);
   return date.toLocaleDateString("es-CL", {
@@ -136,46 +140,90 @@ const formatDate = (dateStr: string): string => {
   });
 };
 
-// Dado un "value" (ej. "Supermarket"), devuelve el label en español (ej. "Supermercado")
+/**
+ * Devuelve el label en español para un detalle.
+ */
 const getDetailLabel = (value: string): string => {
   const option = detailOptions.find((opt) => opt.value === value);
   return option ? option.label : value;
 };
 
 /**
- * Función que agrupa los gastos por categoría y por mes (basado en la fecha de registro).
- * Retorna un objeto con la forma:
- * {
- *   [nombreCategoria]: {
- *     [mesAño]: totalGastoEnEsaCategoríaEseMes,
- *     ...
- *   },
- *   ...
- * }
+ * Calcula el ciclo de facturación. 
+ * Si el día de la fecha es mayor que el día de facturación, se asigna al siguiente mes.
  */
-const groupExpensesByCategoryAndMonth = (expenses: Expense[]) => {
-  const grouped: { [detailLabel: string]: { [yearMonth: string]: number } } = {};
+const getBillingCycle = (date: Date, billingDay: number): string => {
+  const day = date.getDate();
+  let cycleDate = new Date(date);
+  if (day > billingDay) {
+    cycleDate.setMonth(cycleDate.getMonth() + 1);
+  }
+  const year = cycleDate.getFullYear();
+  const month = (cycleDate.getMonth() + 1).toString().padStart(2, "0");
+  return `${year}-${month}`;
+};
 
+/**
+ * Calcula el resumen acumulado repartido por ciclo.
+ * Se reparte cada cuota (totalAmount / installments) en su ciclo correspondiente.
+ * Luego, se suma el total pendiente (sólo de ciclos no liquidados).
+ */
+const calculateSummary = (
+  expenses: Expense[],
+  billingDay: number,
+  liquidatedCycles: Record<string, boolean>
+) => {
+  const summary: { [cycle: string]: number } = {};
   expenses.forEach((exp) => {
-    const date = new Date(exp.registrationDate);
-    const yearMonth = `${date.getFullYear()}-${(date.getMonth() + 1)
-      .toString()
-      .padStart(2, "0")}`;
-    const detailLabel = getDetailLabel(exp.detail);
-
-    if (!grouped[detailLabel]) {
-      grouped[detailLabel] = {};
+    const monthlyPayment = exp.totalAmount / exp.installments;
+    const [year, month] = exp.firstPaymentMonth.split("-").map(Number);
+    for (let i = 0; i < exp.installments; i++) {
+      const dueDate = new Date(year, (month - 1) + i, billingDay);
+      const cycle = getBillingCycle(dueDate, billingDay);
+      summary[cycle] = (summary[cycle] || 0) + monthlyPayment;
     }
-    if (!grouped[detailLabel][yearMonth]) {
-      grouped[detailLabel][yearMonth] = 0;
-    }
-    grouped[detailLabel][yearMonth] += exp.totalAmount;
   });
+  let outstandingTotal = 0;
+  for (const cycle in summary) {
+    if (!liquidatedCycles[cycle]) {
+      outstandingTotal += summary[cycle];
+    }
+  }
+  return { summary, outstandingTotal };
+};
 
+/**
+ * Agrupa gastos por categoría y ciclo, recorriendo las cuotas.
+ */
+const groupExpensesByCategoryAndMonth = (expenses: Expense[], billingDay: number) => {
+  const grouped: { [detailLabel: string]: { [cycle: string]: number } } = {};
+
+  expenses.forEach(exp => {
+    const detailLabel = getDetailLabel(exp.detail);
+    const [year, month] = exp.firstPaymentMonth.split("-").map(Number);
+    for (let i = 0; i < exp.installments; i++) {
+      const dueDate = new Date(year, (month - 1) + i, billingDay);
+      const cycle = getBillingCycle(dueDate, billingDay);
+      if (!grouped[detailLabel]) {
+        grouped[detailLabel] = {};
+      }
+      // Suma la cuota correspondiente (totalAmount / installments)
+      grouped[detailLabel][cycle] = (grouped[detailLabel][cycle] || 0) + (exp.totalAmount / exp.installments);
+    }
+  });
   return grouped;
 };
 
+/**
+ * Auxiliar para formatear ciclo (YYYY-MM) a "Mes YYYY".
+ */
+const formatYearMonth = (ym: string): string => {
+  const [year, month] = ym.split("-").map(Number);
+  return `${monthNames[month - 1]} ${year}`;
+};
+
 const IndexPage: React.FC = () => {
+  // Estados de usuario y gastos
   const [user, setUser] = useState<firebase.User | null>(null);
   const [expenses, setExpenses] = useState<Expense[]>([]);
   const [selectedCard, setSelectedCard] = useState("Itau");
@@ -183,29 +231,34 @@ const IndexPage: React.FC = () => {
   const [totalAmountRaw, setTotalAmountRaw] = useState<number>(0);
   const [totalAmountInput, setTotalAmountInput] = useState<string>("");
   const [installments, setInstallments] = useState<number>(1);
-  const [firstPaymentMonth, setFirstPaymentMonth] = useState<string>(getDefaultFirstPaymentMonth(24));
+  const [firstPaymentMonth, setFirstPaymentMonth] = useState<string>(getDefaultFirstPaymentMonth(27));
   const [detailOption, setDetailOption] = useState<any>(null);
   const [customDetail, setCustomDetail] = useState<string>("");
-  const [billingDay, setBillingDay] = useState<number>(24);
+  const [billingDay, setBillingDay] = useState<number>(27);
 
-  // Datos para el gráfico
+  // Estados para ciclos y liquidaciones
+  const [liquidatedCycles, setLiquidatedCycles] = useState<Record<string, boolean>>({});
+  // Para el filtro de la tabla
+  const [selectedCycle, setSelectedCycle] = useState<string>("all");
+  // Para liquidar o revertir un ciclo
+  const [liquidationCycle, setLiquidationCycle] = useState<string>(getBillingCycle(new Date(), 27));
+
+  // Datos para gráficos y paginación
   const [chartData, setChartData] = useState<any[]>([]);
   const [selectedGraphMonth, setSelectedGraphMonth] = useState<string>("all");
-
-  // Para la tabla de gastos
   const [currentPage, setCurrentPage] = useState<number>(1);
   const itemsPerPage = 15;
 
-  // Modals y campos de configuración
+  // Modals de configuración y cambio de contraseña
   const [showConfigModal, setShowConfigModal] = useState<boolean>(false);
   const [showPasswordModal, setShowPasswordModal] = useState<boolean>(false);
   const [newPassword, setNewPassword] = useState<string>("");
   const [passMsg, setPassMsg] = useState<string>("");
 
-  // Datos agrupados por categoría vs mes
-  const [groupedCategoryData, setGroupedCategoryData] = useState<{ [detailLabel: string]: { [yearMonth: string]: number } }>({});
+  // Datos agrupados por categoría y ciclo
+  const [groupedCategoryData, setGroupedCategoryData] = useState<{ [detailLabel: string]: { [cycle: string]: number } }>({});
 
-  // 1. Cargar config por defecto de localStorage
+  // Cargar configuraciones y liquidaciones desde localStorage
   useEffect(() => {
     const storedDefaults = localStorage.getItem("defaultSettings");
     if (storedDefaults) {
@@ -218,9 +271,13 @@ const IndexPage: React.FC = () => {
         setFirstPaymentMonth(getDefaultFirstPaymentMonth(bd));
       }
     }
+    const storedLiquidations = localStorage.getItem("liquidatedCycles");
+    if (storedLiquidations) {
+      setLiquidatedCycles(JSON.parse(storedLiquidations));
+    }
   }, []);
 
-  // 2. Verificar si hay usuario logueado
+  // Verificar autenticación del usuario
   useEffect(() => {
     const unsubscribe = auth.onAuthStateChanged((usr) => {
       if (usr) {
@@ -232,7 +289,7 @@ const IndexPage: React.FC = () => {
     return () => unsubscribe();
   }, []);
 
-  // 3. Cargar gastos desde Firestore en tiempo real
+  // Cargar gastos en tiempo real desde Firestore
   useEffect(() => {
     if (user) {
       const unsubscribe = firestore
@@ -249,42 +306,163 @@ const IndexPage: React.FC = () => {
     }
   }, [user]);
 
-  // 4. Calcular datos del gráfico y de la tabla de categorías vs mes
-  useEffect(() => {
-    let filteredForGraph = expenses.filter((exp) => exp.card === selectedCard);
-    if (selectedGraphMonth !== "all") {
-      filteredForGraph = filteredForGraph.filter((exp) => {
-        const d = new Date(exp.registrationDate);
-        return monthNames[d.getMonth()] === selectedGraphMonth;
-      });
+  // Generar listado de ciclos disponibles recorriendo TODAS las cuotas de cada gasto
+  const availableCyclesSet = new Set<string>();
+  expenses.filter(exp => exp.card === selectedCard).forEach(exp => {
+    const [year, month] = exp.firstPaymentMonth.split("-").map(Number);
+    for (let i = 0; i < exp.installments; i++) {
+      const dueDate = new Date(year, (month - 1) + i, billingDay);
+      const cycle = getBillingCycle(dueDate, billingDay);
+      availableCyclesSet.add(cycle);
     }
+  });
+  const availableCycles = Array.from(availableCyclesSet).sort();
 
-    // Totales por categoría (filtrados por tarjeta y mes)
-    const totals: { [key: string]: number } = {};
-    filteredForGraph.forEach((exp) => {
-      const label = getDetailLabel(exp.detail);
-      totals[label] = (totals[label] || 0) + exp.totalAmount;
+  // ---- AQUI VIENE LA CORRECCIÓN PRINCIPAL PARA EL GRÁFICO ----
+  // Filtrar gastos por cuotas para obtener data del gráfico
+  useEffect(() => {
+    const filteredExpenses = expenses.filter(exp => exp.card === selectedCard);
+
+    const totals: { [category: string]: number } = {};
+
+    filteredExpenses.forEach(exp => {
+      const monthlyPayment = exp.totalAmount / exp.installments;
+      const [year, month] = exp.firstPaymentMonth.split("-").map(Number);
+      const category = getDetailLabel(exp.detail);
+
+      for (let i = 0; i < exp.installments; i++) {
+        const dueDate = new Date(year, (month - 1) + i, billingDay);
+        const cycle = getBillingCycle(dueDate, billingDay);
+        const cycleLabel = formatYearMonth(cycle);
+
+        // Si el usuario selecciona "Todos", sumamos todas las cuotas
+        if (selectedGraphMonth === "all") {
+          // Sumamos el monthlyPayment por cada cuota => total del gasto
+          totals[category] = (totals[category] || 0) + monthlyPayment;
+        } else {
+          // Si seleccionó un mes específico, solo sumamos la cuota de ese mes
+          if (cycleLabel === selectedGraphMonth) {
+            totals[category] = (totals[category] || 0) + monthlyPayment;
+          }
+        }
+      }
     });
 
-    // Convierto totales en un array
-    const data = Object.keys(totals).map((key) => ({
-      name: key,
-      total: totals[key],
-    }));
+    // Convertimos totals en array y lo ordenamos de mayor a menor
+    const data = Object.keys(totals)
+      .map(key => ({ name: key, total: totals[key] }))
+      .sort((a, b) => b.total - a.total);
 
     setChartData(data);
+  }, [expenses, selectedCard, selectedGraphMonth, billingDay]);
 
-    // Para la tabla "Detalle por Categoría y Mes", usamos todos los gastos de la tarjeta
-    const filteredAllByCard = expenses.filter((exp) => exp.card === selectedCard);
-    const grouped = groupExpensesByCategoryAndMonth(filteredAllByCard);
-    setGroupedCategoryData(grouped);
-  }, [expenses, selectedCard, selectedGraphMonth]);
+  // Generar datos agrupados por categoría y ciclo (para la tabla de detalle)
+  useEffect(() => {
+    const grouped = groupExpensesByCategoryAndMonth(
+      expenses.filter(exp => exp.card === selectedCard),
+      billingDay
+    );
+    // Ordenar categorías por total descendente
+    const sortedGrouped: { [detailLabel: string]: { [cycle: string]: number } } = {};
+    Object.keys(grouped)
+      .sort((a, b) => {
+        const sumA = Object.values(grouped[a]).reduce((acc, val) => acc + val, 0);
+        const sumB = Object.values(grouped[b]).reduce((acc, val) => acc + val, 0);
+        return sumB - sumA;
+      })
+      .forEach(key => {
+        sortedGrouped[key] = grouped[key];
+      });
+    setGroupedCategoryData(sortedGrouped);
+  }, [expenses, selectedCard, billingDay]);
 
-  // Helpers
-  const handleLogout = () => {
-    auth.signOut().then(() => navigate("/login"));
+  // Filtrar gastos para la tabla de "Gastos Registrados"
+  const filteredExpenses = expenses
+    .filter(exp => exp.card === selectedCard)
+    .filter(exp => {
+      if (selectedCycle === "all") return true;
+      const [year, month] = exp.firstPaymentMonth.split("-").map(Number);
+      for (let i = 0; i < exp.installments; i++) {
+        const dueDate = new Date(year, (month - 1) + i, billingDay);
+        const cycle = getBillingCycle(dueDate, billingDay);
+        if (cycle === selectedCycle) return true;
+      }
+      return false;
+    })
+    .sort((a, b) => new Date(b.registrationDate).getTime() - new Date(a.registrationDate).getTime());
+
+  const indexOfLastExpense = currentPage * itemsPerPage;
+  const indexOfFirstExpense = indexOfLastExpense - itemsPerPage;
+  const currentExpenses = filteredExpenses.slice(indexOfFirstExpense, indexOfLastExpense);
+  const totalPages = Math.ceil(filteredExpenses.length / itemsPerPage);
+
+  // Calcular resumen acumulado y total pendiente (se descuenta solo ciclos liquidados)
+  const { summary, outstandingTotal } = calculateSummary(expenses, billingDay, liquidatedCycles);
+  const sortedCycles = Object.keys(summary).sort();
+
+  // Función para liquidar un ciclo seleccionado
+  const handleLiquidateCycle = (cycle: string) => {
+    if (liquidatedCycles[cycle]) {
+      toast.info(`El ciclo ${formatYearMonth(cycle)} ya está liquidado.`);
+      return;
+    }
+    if (window.confirm(`¿Deseas liquidar el ciclo ${formatYearMonth(cycle)}? Esto descontará su monto del total pendiente.`)) {
+      const newLiquidations = { ...liquidatedCycles, [cycle]: true };
+      setLiquidatedCycles(newLiquidations);
+      localStorage.setItem("liquidatedCycles", JSON.stringify(newLiquidations));
+      toast.success(`Ciclo ${formatYearMonth(cycle)} liquidado exitosamente.`);
+    }
   };
 
+  // Función para revertir la liquidación de un ciclo
+  const handleRevertLiquidation = (cycle: string) => {
+    if (!liquidatedCycles[cycle]) {
+      toast.info(`El ciclo ${formatYearMonth(cycle)} no está liquidado.`);
+      return;
+    }
+    if (window.confirm(`¿Deseas revertir la liquidación del ciclo ${formatYearMonth(cycle)}?`)) {
+      const newLiquidations = { ...liquidatedCycles };
+      delete newLiquidations[cycle];
+      setLiquidatedCycles(newLiquidations);
+      localStorage.setItem("liquidatedCycles", JSON.stringify(newLiquidations));
+      toast.success(`Liquidación del ciclo ${formatYearMonth(cycle)} revertida.`);
+    }
+  };
+
+  // Función para limpiar todos los datos (gastos y configuraciones)
+  const handleClearData = async () => {
+    if (window.confirm("¿Estás seguro de que deseas limpiar TODOS los datos? Esta acción es irreversible.")) {
+      try {
+        if (user) {
+          const snapshot = await firestore.collection("expenses").where("userId", "==", user.uid).get();
+          const batch = firestore.batch();
+          snapshot.forEach(doc => batch.delete(doc.ref));
+          await batch.commit();
+        }
+        localStorage.removeItem("defaultSettings");
+        localStorage.removeItem("liquidatedCycles");
+        setExpenses([]);
+        setLiquidatedCycles({});
+        toast.success("Datos limpiados correctamente.");
+      } catch (error) {
+        toast.error("Error al limpiar los datos.");
+        console.error(error);
+      }
+    }
+  };
+
+  // Cerrar sesión correctamente con async/await
+  const handleLogout = async () => {
+    try {
+      await auth.signOut();
+      navigate("/login");
+    } catch (error) {
+      console.error("Error al cerrar sesión:", error);
+      toast.error("Error al cerrar sesión.");
+    }
+  };
+
+  // Manejo de inputs para el monto total
   const handleTotalAmountChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const rawValue = e.target.value.replace(/\D/g, "");
     const numericValue = Number(rawValue);
@@ -293,6 +471,7 @@ const IndexPage: React.FC = () => {
     setTotalAmountInput(formatted);
   };
 
+  // Agregar un nuevo gasto
   const handleAddExpense = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!user) return;
@@ -320,7 +499,7 @@ const IndexPage: React.FC = () => {
     try {
       await firestore.collection("expenses").add(data);
       toast.success("¡Gasto agregado con éxito!");
-      // Reset del formulario
+      // Resetear formulario
       setTotalAmountRaw(0);
       setTotalAmountInput("");
       setInstallments(1);
@@ -333,88 +512,31 @@ const IndexPage: React.FC = () => {
     }
   };
 
-  // Calcula la próxima fecha de facturación
+  // Calcular la próxima fecha de facturación
   const getNextBillingDate = (): string => {
     const today = new Date();
-    const bd = billingDay;
-    if (today.getDate() < bd) {
-      return `${bd} de ${monthNames[today.getMonth()]}`;
+    if (today.getDate() < billingDay) {
+      return `${billingDay} de ${monthNames[today.getMonth()]}`;
     } else {
       let nextMonth = today.getMonth() + 1;
       if (nextMonth > 11) nextMonth = 0;
-      return `${bd} de ${monthNames[nextMonth]}`;
+      return `${billingDay} de ${monthNames[nextMonth]}`;
     }
   };
 
-  // Resumen mensual (cuánto pagar cada mes, sumando cuotas)
-  const calculateSummary = () => {
-    const filtered = expenses.filter((exp) => exp.card === selectedCard);
-    const totalCard = filtered.reduce((acc, exp) => acc + exp.totalAmount, 0);
-
-    const summary: { [key: string]: number } = {};
-    filtered.forEach((exp) => {
-      const monthlyPayment = exp.totalAmount / exp.installments;
-      let [year, month] = exp.firstPaymentMonth.split("-").map(Number);
-      for (let i = 0; i < exp.installments; i++) {
-        const current = new Date(year, month - 1 + i, 1);
-        const key = `${current.getFullYear()}-${(current.getMonth() + 1)
-          .toString()
-          .padStart(2, "0")}`;
-        summary[key] = (summary[key] || 0) + monthlyPayment;
-      }
-    });
-    return { summary, totalCard };
-  };
-
-  const { summary, totalCard } = calculateSummary();
-  const sortedMonths = Object.keys(summary).sort();
-
-  // Paginación de gastos
-  const filteredExpenses = expenses
-    .filter((exp) => exp.card === selectedCard)
-    .sort((a, b) => new Date(b.registrationDate).getTime() - new Date(a.registrationDate).getTime());
-
-  const indexOfLastExpense = currentPage * itemsPerPage;
-  const indexOfFirstExpense = indexOfLastExpense - itemsPerPage;
-  const currentExpenses = filteredExpenses.slice(indexOfFirstExpense, indexOfLastExpense);
-  const totalPages = Math.ceil(filteredExpenses.length / itemsPerPage);
-
-  // Meses únicos (por fecha de registro) para filtrar el gráfico
-  const uniqueGraphMonths = Array.from(
-    new Set(
-      expenses
-        .filter((exp) => exp.card === selectedCard)
-        .map((exp) => {
-          const d = new Date(exp.registrationDate);
-          return monthNames[d.getMonth()];
-        })
-    )
-  ).sort((a, b) => monthNames.indexOf(a) - monthNames.indexOf(b));
-
-  // Modal config
-  const openConfigModal = () => {
-    setShowConfigModal(true);
-  };
-  const closeConfigModal = () => {
-    setShowConfigModal(false);
-  };
+  // Modals de configuración y cambio de contraseña
+  const openConfigModal = () => setShowConfigModal(true);
+  const closeConfigModal = () => setShowConfigModal(false);
   const handleSaveDefaults = (e: React.FormEvent) => {
     e.preventDefault();
-    const defaults = {
-      selectedCard: card,
-      card: card,
-      billingDay,
-    };
+    const defaults = { selectedCard: card, card: card, billingDay };
     localStorage.setItem("defaultSettings", JSON.stringify(defaults));
     setSelectedCard(defaults.selectedCard);
     setCard(defaults.card);
     closeConfigModal();
   };
 
-  // Modal cambio de contraseña
-  const openPasswordModal = () => {
-    setShowPasswordModal(true);
-  };
+  const openPasswordModal = () => setShowPasswordModal(true);
   const closePasswordModal = () => {
     setShowPasswordModal(false);
     setNewPassword("");
@@ -422,10 +544,10 @@ const IndexPage: React.FC = () => {
   };
   const handleChangePassword = async (e: React.FormEvent) => {
     e.preventDefault();
-    const user = auth.currentUser;
-    if (!user) return;
+    const currentUser = auth.currentUser;
+    if (!currentUser) return;
     try {
-      await user.updatePassword(newPassword);
+      await currentUser.updatePassword(newPassword);
       setPassMsg("Contraseña actualizada con éxito.");
       setNewPassword("");
     } catch (err: any) {
@@ -433,33 +555,22 @@ const IndexPage: React.FC = () => {
     }
   };
 
-  // Tabla de categorías vs mes: recolectar todos los year-month
-  const allYearMonths = new Set<string>();
-  Object.values(groupedCategoryData).forEach((categoryObj) => {
-    Object.keys(categoryObj).forEach((ym) => allYearMonths.add(ym));
-  });
-  const sortedYearMonths = Array.from(allYearMonths).sort();
-
-  // Formatear "YYYY-MM" -> "Mes YYYY"
-  const formatYearMonth = (ym: string): string => {
-    const [year, month] = ym.split("-").map(Number);
-    return `${monthNames[month - 1]} ${year}`;
-  };
-
   return (
     <div className="container">
       <ToastContainer />
-
       <header className="header">
         <h1>Mis Pagos Mensuales</h1>
         <div style={{ display: "flex", gap: "8px" }}>
           <button onClick={openConfigModal}>Configuración predeterminada</button>
           <button onClick={openPasswordModal}>Cambiar contraseña</button>
           <button onClick={handleLogout}>Cerrar Sesión</button>
+          <button onClick={handleClearData} style={{ backgroundColor: "red", color: "white" }}>
+            Limpiar los datos
+          </button>
         </div>
       </header>
 
-      {/* Modal Config */}
+      {/* Modal Configuración */}
       {showConfigModal && (
         <div className="modal-overlay">
           <div className="modal-content">
@@ -468,40 +579,29 @@ const IndexPage: React.FC = () => {
               <div className="form-group">
                 <label>Selecciona Tarjeta para Resumen:</label>
                 <select value={card} onChange={(e) => setCard(e.target.value)}>
-                  {bankOptions.map((bank) => (
-                    <option key={bank} value={bank}>
-                      {bank}
-                    </option>
+                  {bankOptions.map(bank => (
+                    <option key={bank} value={bank}>{bank}</option>
                   ))}
                 </select>
               </div>
               <div className="form-group">
                 <label>Fecha de Facturación (día):</label>
-                <select
-                  value={billingDay}
-                  onChange={(e) => setBillingDay(parseInt(e.target.value))}
-                >
-                  {Array.from({ length: 31 }, (_, i) => i + 1).map((day) => (
-                    <option key={day} value={day}>
-                      {day}
-                    </option>
+                <select value={billingDay} onChange={(e) => setBillingDay(parseInt(e.target.value))}>
+                  {Array.from({ length: 31 }, (_, i) => i + 1).map(day => (
+                    <option key={day} value={day}>{day}</option>
                   ))}
                 </select>
               </div>
-              <div
-                style={{ display: "flex", gap: "8px", marginTop: "16px" }}
-              >
+              <div style={{ display: "flex", gap: "8px", marginTop: "16px" }}>
                 <button type="submit">Guardar</button>
-                <button type="button" onClick={closeConfigModal}>
-                  Cancelar
-                </button>
+                <button type="button" onClick={closeConfigModal}>Cancelar</button>
               </div>
             </form>
           </div>
         </div>
       )}
 
-      {/* Modal Password */}
+      {/* Modal Cambio de Contraseña */}
       {showPasswordModal && (
         <div className="modal-overlay">
           <div className="modal-content">
@@ -509,18 +609,11 @@ const IndexPage: React.FC = () => {
             <form onSubmit={handleChangePassword}>
               <div className="form-group">
                 <label>Nueva Contraseña:</label>
-                <input
-                  type="password"
-                  value={newPassword}
-                  onChange={(e) => setNewPassword(e.target.value)}
-                  required
-                />
+                <input type="password" value={newPassword} onChange={(e) => setNewPassword(e.target.value)} required />
               </div>
               <div style={{ display: "flex", gap: "8px", marginTop: "16px" }}>
                 <button type="submit">Actualizar</button>
-                <button type="button" onClick={closePasswordModal}>
-                  Cancelar
-                </button>
+                <button type="button" onClick={closePasswordModal}>Cancelar</button>
               </div>
             </form>
             {passMsg && (
@@ -532,7 +625,7 @@ const IndexPage: React.FC = () => {
         </div>
       )}
 
-      {/* Filtro de tarjeta */}
+      {/* Filtros: Tarjeta y Ciclo para la tabla */}
       <section className="filter-section">
         <label>Selecciona Tarjeta para Resumen:</label>
         <select
@@ -542,63 +635,68 @@ const IndexPage: React.FC = () => {
             setCurrentPage(1);
           }}
         >
-          {bankOptions.map((bank) => (
-            <option key={bank} value={bank}>
-              {bank}
-            </option>
+          {bankOptions.map(bank => (
+            <option key={bank} value={bank}>{bank}</option>
+          ))}
+        </select>
+        <label style={{ marginLeft: "16px" }}>Selecciona Ciclo de Facturación:</label>
+        <select
+          value={selectedCycle}
+          onChange={(e) => {
+            setSelectedCycle(e.target.value);
+            setCurrentPage(1);
+          }}
+        >
+          <option value="all">Todos</option>
+          {availableCycles.map(cycle => (
+            <option key={cycle} value={cycle}>{formatYearMonth(cycle)}</option>
           ))}
         </select>
       </section>
 
-      {/* Formulario para agregar gasto */}
+      {/* Sección para Liquidar/Revertir un ciclo */}
+      <section className="liquidation-section" style={{ margin: "16px 0", padding: "8px", border: "1px solid #ccc" }}>
+        <label>Liquidar/Revertir ciclo:</label>
+        <select
+          value={liquidationCycle}
+          onChange={(e) => setLiquidationCycle(e.target.value)}
+          style={{ margin: "0 8px" }}
+        >
+          {availableCycles.map(cycle => (
+            <option key={cycle} value={cycle}>{formatYearMonth(cycle)}</option>
+          ))}
+        </select>
+        {liquidatedCycles[liquidationCycle] ? (
+          <button onClick={() => handleRevertLiquidation(liquidationCycle)}>Revertir liquidación</button>
+        ) : (
+          <button onClick={() => handleLiquidateCycle(liquidationCycle)}>Liquidar ciclo</button>
+        )}
+      </section>
+
+      {/* Formulario para Agregar Gasto */}
       <section className="form-section">
         <h2>Agregar Gasto</h2>
         <form onSubmit={handleAddExpense}>
           <div className="form-group">
             <label>Tarjeta:</label>
-            <select
-              value={card}
-              onChange={(e) => setCard(e.target.value)}
-            >
-              {bankOptions.map((bank) => (
-                <option key={bank} value={bank}>
-                  {bank}
-                </option>
+            <select value={card} onChange={(e) => setCard(e.target.value)}>
+              {bankOptions.map(bank => (
+                <option key={bank} value={bank}>{bank}</option>
               ))}
             </select>
           </div>
-
           <div className="form-group">
             <label>Monto Total (CLP):</label>
-            <input
-              type="text"
-              value={totalAmountInput}
-              onChange={handleTotalAmountChange}
-              required
-            />
+            <input type="text" value={totalAmountInput} onChange={handleTotalAmountChange} required />
           </div>
-
           <div className="form-group">
             <label>Cuotas:</label>
-            <input
-              type="number"
-              value={installments}
-              onChange={(e) => setInstallments(parseInt(e.target.value))}
-              min="1"
-              required
-            />
+            <input type="number" value={installments} onChange={(e) => setInstallments(parseInt(e.target.value))} min="1" required />
           </div>
-
           <div className="form-group">
             <label>Mes de la Primera Cuota:</label>
-            <input
-              type="month"
-              value={firstPaymentMonth}
-              onChange={(e) => setFirstPaymentMonth(e.target.value)}
-              required
-            />
+            <input type="month" value={firstPaymentMonth} onChange={(e) => setFirstPaymentMonth(e.target.value)} required />
           </div>
-
           <div className="form-group">
             <label>Detalle del Gasto:</label>
             <ReactSelect
@@ -617,16 +715,13 @@ const IndexPage: React.FC = () => {
               />
             )}
           </div>
-
-          <button className="add-pay" type="submit">
-            Agregar Gasto
-          </button>
+          <button className="add-pay" type="submit">Agregar Gasto</button>
         </form>
       </section>
 
-      {/* Tabla de gastos registrados */}
+      {/* Sección de Gastos Registrados */}
       <section className="purchases-section">
-        <h2>Gastos Registrados</h2>
+        <h2>Gastos Registrados {selectedCycle === "all" ? "(Histórico)" : `(Ciclo: ${formatYearMonth(selectedCycle)})`}</h2>
         <div className="table-container">
           <table>
             <thead>
@@ -634,30 +729,27 @@ const IndexPage: React.FC = () => {
                 <th>Detalle</th>
                 <th>Monto Total</th>
                 <th>Cuotas</th>
+                <th>Valor cuota</th>
                 <th>Mes Primera Cuota</th>
                 <th>Fecha Registro</th>
                 <th>Acciones</th>
               </tr>
             </thead>
             <tbody>
-              {currentExpenses.map((exp) => (
+              {currentExpenses.map(exp => (
                 <tr key={exp.id}>
                   <td>{getDetailLabel(exp.detail)}</td>
-                  <td>
-                    {new Intl.NumberFormat("es-CL", {
-                      style: "currency",
-                      currency: "CLP",
-                    }).format(exp.totalAmount)}
-                  </td>
+                  <td>{new Intl.NumberFormat("es-CL", { style: "currency", currency: "CLP" }).format(exp.totalAmount)}</td>
                   <td>{exp.installments}</td>
+                  <td>
+                    {new Intl.NumberFormat("es-CL", { style: "currency", currency: "CLP" }).format(exp.totalAmount / exp.installments)}
+                  </td>
                   <td>{exp.firstPaymentMonth}</td>
                   <td>{formatDate(exp.registrationDate)}</td>
                   <td>
-                    <button
-                      onClick={async () => {
-                        await firestore.collection("expenses").doc(exp.id).delete();
-                      }}
-                    >
+                    <button onClick={async () => {
+                      await firestore.collection("expenses").doc(exp.id).delete();
+                    }}>
                       Eliminar
                     </button>
                   </td>
@@ -665,23 +757,13 @@ const IndexPage: React.FC = () => {
               ))}
             </tbody>
           </table>
-
-          {/* Paginación */}
           {filteredExpenses.length > itemsPerPage && (
             <div className="pagination">
-              <button
-                disabled={currentPage === 1}
-                onClick={() => setCurrentPage(currentPage - 1)}
-              >
+              <button disabled={currentPage === 1} onClick={() => setCurrentPage(currentPage - 1)}>
                 Anterior
               </button>
-              <span>
-                {currentPage} / {totalPages}
-              </span>
-              <button
-                disabled={currentPage === totalPages}
-                onClick={() => setCurrentPage(currentPage + 1)}
-              >
+              <span>{currentPage} / {totalPages}</span>
+              <button disabled={currentPage === totalPages} onClick={() => setCurrentPage(currentPage + 1)}>
                 Siguiente
               </button>
             </div>
@@ -689,17 +771,14 @@ const IndexPage: React.FC = () => {
         </div>
       </section>
 
-      {/* Resumen Mensual */}
+      {/* Sección de Resumen Mensual */}
       <section className="summary-section">
         <h2>Resumen Mensual</h2>
         <div className="summary-container">
           <div className="total-card">
             <h4>
-              Total acumulado para {selectedCard}:{" "}
-              {new Intl.NumberFormat("es-CL", {
-                style: "currency",
-                currency: "CLP",
-              }).format(totalCard)}
+              Total acumulado pendiente para {selectedCard}:{" "}
+              {new Intl.NumberFormat("es-CL", { style: "currency", currency: "CLP" }).format(outstandingTotal)}
             </h4>
           </div>
           <div className="billing-summary">
@@ -709,19 +788,18 @@ const IndexPage: React.FC = () => {
             <table>
               <thead>
                 <tr>
-                  {sortedMonths.map((month) => (
-                    <th key={month}>{month}</th>
+                  {sortedCycles.map(cycle => (
+                    <th key={cycle}>
+                      {formatYearMonth(cycle)} {liquidatedCycles[cycle] ? "(Liquidado)" : ""}
+                    </th>
                   ))}
                 </tr>
               </thead>
               <tbody>
                 <tr>
-                  {sortedMonths.map((month) => (
-                    <td key={month}>
-                      {new Intl.NumberFormat("es-CL", {
-                        style: "currency",
-                        currency: "CLP",
-                      }).format(summary[month])}
+                  {sortedCycles.map(cycle => (
+                    <td key={cycle}>
+                      {new Intl.NumberFormat("es-CL", { style: "currency", currency: "CLP" }).format(summary[cycle] || 0)}
                     </td>
                   ))}
                 </tr>
@@ -731,10 +809,11 @@ const IndexPage: React.FC = () => {
         </div>
       </section>
 
-      {/* Sección de gráfico (usando ChartSection) */}
+      {/* Sección de Gráficos */}
       <ChartSection
         data={chartData}
-        months={uniqueGraphMonths}
+        // Se listan los ciclos disponibles (formateados) para el selector del gráfico
+        months={availableCycles.map(c => formatYearMonth(c))}
         selectedMonth={selectedGraphMonth}
         onMonthChange={(m) => {
           setSelectedGraphMonth(m);
@@ -742,33 +821,30 @@ const IndexPage: React.FC = () => {
         }}
       />
 
-      {/* Tabla de Categoría vs Mes */}
+      {/* Tabla de Detalle por Categoría y Ciclo */}
       <section className="category-month-section">
-        <h2>Detalle por Categoría y Mes</h2>
-        <p>Visualiza cuánto has gastado en cada categoría en cada mes (según fecha de registro).</p>
+        <h2>Detalle por Categoría y Ciclo</h2>
+        <p>Visualiza cuánto has gastado en cada categoría en cada ciclo de facturación.</p>
         <div className="table-scroll">
           <table className="category-month-table">
             <thead>
               <tr>
                 <th>Categoría</th>
-                {sortedYearMonths.map((ym) => (
-                  <th key={ym}>{formatYearMonth(ym)}</th>
+                {availableCycles.map(cycle => (
+                  <th key={cycle}>{formatYearMonth(cycle)}</th>
                 ))}
               </tr>
             </thead>
             <tbody>
-              {Object.entries(groupedCategoryData).map(([detailLabel, monthsObj]) => (
+              {Object.entries(groupedCategoryData).map(([detailLabel, cyclesObj]) => (
                 <tr key={detailLabel}>
                   <td>{detailLabel}</td>
-                  {sortedYearMonths.map((ym) => {
-                    const amount = monthsObj[ym] || 0;
+                  {availableCycles.map(cycle => {
+                    const amount = cyclesObj[cycle] || 0;
                     return (
-                      <td key={ym}>
+                      <td key={cycle}>
                         {amount > 0
-                          ? new Intl.NumberFormat("es-CL", {
-                              style: "currency",
-                              currency: "CLP",
-                            }).format(amount)
+                          ? new Intl.NumberFormat("es-CL", { style: "currency", currency: "CLP" }).format(amount)
                           : "-"}
                       </td>
                     );

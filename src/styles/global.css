@@ -246,6 +246,7 @@ p.success {
 /* Ejemplo de estilos para la tabla de categorías vs mes */
 .category-month-section {
   margin-top: 2rem;
+  margin-bottom:100px;
 }
 
 .category-month-table {
